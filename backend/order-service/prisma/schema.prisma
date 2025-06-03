@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model orders {
+  id               Int           @id @default(autoincrement())
+  user_id          String        @db.VarChar(50)
+  delivery_option  String        @db.VarChar(20)
+  table_number     Int?
+  delivery_address Json?
+  total_price      Decimal       @db.Decimal(10, 2)
+  status           String        @default("pending") @db.VarChar(20)
+  created_at       DateTime      @default(now()) @db.Timestamp(6)
+
+  order_items      order_items[]
+  payments         payments[]
+
+  @@index([user_id])
+}
+
+model order_items {
+  id             Int       @id @default(autoincrement())
+  order_id       Int
+  product_id     Int
+  quantity       Int
+  customizations Json?
+  created_at     DateTime  @default(now()) @db.Timestamp(6)
+
+  order   orders   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product products @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@index([order_id])
+  @@index([product_id])
+}
+
+model payments {
+  id              Int      @id @default(autoincrement())
+  order_id        Int      @unique
+  amount          Decimal  @db.Decimal(10, 2)
+  payment_method  String   @db.VarChar(20)
+  status          String   @db.VarChar(20)
+  transaction_id  String?  @db.VarChar(100)
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+  promo_code      String?  @db.VarChar(50)
+  discount_amount Decimal? @db.Decimal(10, 2)
+
+  order orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+}
+
+model products {
+  id                    Int                     @id @default(autoincrement())
+  name                  String                  @db.VarChar(100)
+  category_id           Int
+  price                 Decimal                 @db.Decimal(10, 2)
+  nutritional_info      Json?
+  created_at            DateTime                @default(now()) @db.Timestamp(6)
+
+  category              categories              @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  order_items           order_items[]
+  product_customizations product_customizations[]
+  product_ingredients   product_ingredients[]
+}
+
+model categories {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique @db.VarChar(50)
+  description String?
+  created_at  DateTime    @default(now())
+  products    products[]
+}
+
+model product_customizations {
+  id               Int          @id @default(autoincrement())
+  product_id       Int
+  type             String       @db.VarChar(20)
+  ingredient_id    Int?
+  name             String       @db.VarChar(100)
+  additional_price Decimal      @db.Decimal(10, 2)
+  created_at       DateTime     @default(now()) @db.Timestamp(6)
+
+  product    products    @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  ingredient ingredients? @relation(fields: [ingredient_id], references: [id], onDelete: Restrict)
+
+  @@index([product_id])
+}
+
+model ingredients {
+  id                    Int                    @id @default(autoincrement())
+  name                  String                 @db.VarChar(100)
+  created_at            DateTime               @default(now()) @db.Timestamp(6)
+
+  product_customizations product_customizations[]
+  product_ingredients   product_ingredients[]
+  ingredient_allergens  ingredient_allergens[]
+}
+
+model product_ingredients {
+  product_id    Int
+  ingredient_id Int
+
+  product    products    @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  ingredient ingredients @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
+
+  @@id([product_id, ingredient_id])
+}
+
+model allergens {
+  id         Int                 @id @default(autoincrement())
+  name       String              @unique
+  ingredients ingredient_allergens[]
+}
+
+model ingredient_allergens {
+  ingredient_id Int
+  allergen_id   Int
+
+  ingredient ingredients @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
+  allergen   allergens   @relation(fields: [allergen_id], references: [id], onDelete: Cascade)
+
+  @@id([ingredient_id, allergen_id])
+}
+
+model promo_codes {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique @db.VarChar(50)
+  discount     Decimal  @db.Decimal(5, 2)
+  valid_from   DateTime @db.Timestamp(6)
+  valid_until  DateTime @db.Timestamp(6)
+  max_uses     Int?
+  uses         Int      @default(0)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([code])
+}
+
+model roles {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  users users[]
+}
+
+model users {
+  id         Int      @id @default(autoincrement())
+  email      String   @unique
+  password   String?
+  role_id    Int?
+  role       roles?   @relation(fields: [role_id], references: [id], onDelete: SetNull)
+  created_at DateTime @default(now())
+}

@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model payments {
+  id              Int      @id @default(autoincrement())
+  order_id        Int      @unique
+  amount          Decimal  @db.Decimal(10, 2)
+  payment_method  String   @db.VarChar(20)
+  status          String   @db.VarChar(20)
+  transaction_id  String?  @db.VarChar(100)
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+  promo_code      String?  @db.VarChar(50)
+  discount_amount Decimal? @db.Decimal(10, 2)
+
+  @@index([order_id])
+}
+
+model promo_codes {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(50)
+  discount   Decimal  @db.Decimal(5, 2)
+  valid_from DateTime @db.Timestamp(6)
+  valid_until DateTime @db.Timestamp(6)
+  max_uses   Int?
+  uses       Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([code])
+}
+
+model orders {
+  id              Int      @id @default(autoincrement())
+  user_id         String?  @db.VarChar(50)
+  delivery_option String   @db.VarChar(20)
+  table_number    Int?
+  status          String   @default("pending") @db.VarChar(20)
+  total_price     Decimal  @db.Decimal(10, 2)
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+}
+
+

@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ../frontend:/app
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+      menu-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      loyalty-service:
+        condition: service_started
+    networks:
+      - app-network
+  
+  menu-service:
+    build:
+      context: ../backend/menu-service
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+    volumes:
+      - ../backend/menu-service:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    networks:
+      - app-network
+  payment-service:
+    build:
+      context: ../backend/payment-service
+      dockerfile: Dockerfile
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+    volumes:
+      - ../backend/payment-service:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    networks:
+      - app-network
+  loyalty-service:
+    build:
+      context: ../backend/loyalty-service
+      dockerfile: Dockerfile
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=development
+      - PORT=3004
+      - MONGO_URI=mongodb://mongo:27017/mcdonalds_kiosk
+    volumes:
+      - ../backend/loyalty-service:/app
+    depends_on:
+      mongo:
+        condition: service_started
+      menu-service:
+        condition: service_started
+    networks:
+      - app-network
+
+  order-service:
+    build:
+      context: ../backend/order-service
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+    volumes:
+      - ../backend/order-service:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_started
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mcdonalds_kiosk
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d mcdonalds_kiosk"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  mongo_data:
+
+networks:
+  app-network:
+    driver: bridge

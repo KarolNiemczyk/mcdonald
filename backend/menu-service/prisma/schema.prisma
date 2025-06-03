@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model categories {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  description String?
+  created_at  DateTime    @default(now())
+  products    products[]
+}
+
+model products {
+  id                Int                 @id @default(autoincrement())
+  category_id       Int?
+  category          categories?         @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  name              String
+  description       String?
+  price             Decimal             @db.Decimal(5, 2)
+  availability      Boolean             @default(true)
+  nutritional_info  Json?
+  created_at        DateTime            @default(now())
+  ingredients       product_ingredients[]
+  order_items       order_items[]
+}
+
+model ingredients {
+  id          Int                   @id @default(autoincrement())
+  name        String                @unique
+  description String?
+  products    product_ingredients[]
+  allergens   ingredient_allergens[]
+}
+
+model product_ingredients {
+  product_id    Int
+  ingredient_id Int
+  product       products    @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  ingredient    ingredients @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
+
+  @@id([product_id, ingredient_id])
+}
+
+model allergens {
+  id          Int                   @id @default(autoincrement())
+  name        String                @unique
+  ingredients ingredient_allergens[]
+}
+
+model ingredient_allergens {
+  ingredient_id Int
+  allergen_id   Int
+  ingredient    ingredients @relation(fields: [ingredient_id], references: [id], onDelete: Cascade)
+  allergen      allergens   @relation(fields: [allergen_id], references: [id], onDelete: Cascade)
+
+  @@id([ingredient_id, allergen_id])
+}
+
+model orders {
+  id              Int          @id @default(autoincrement())
+  user_id         String?
+  status          String       @default("pending")
+  delivery_option String
+  table_number    Int?
+  total_price     Decimal      @db.Decimal(7, 2)
+  created_at      DateTime     @default(now())
+  order_items     order_items[]
+  payments        payments?
+}
+
+model order_items {
+  id             Int       @id @default(autoincrement())
+  order_id       Int
+  product_id     Int
+  quantity       Int
+  customizations Json?
+  unit_price     Decimal   @db.Decimal(5, 2)
+
+  order   orders   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product products @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@index([order_id])
+  @@index([product_id])
+}
+
+model payments {
+  id              Int       @id @default(autoincrement())
+  order_id        Int       @unique
+  amount          Decimal   @db.Decimal(10, 2)
+  payment_method  String    @db.VarChar(20)
+  status          String    @db.VarChar(20)
+  transaction_id  String?   @db.VarChar(100)
+  created_at      DateTime  @default(now()) @db.Timestamp(6)
+  promo_code      String?   @db.VarChar(50)
+  discount_amount Decimal?  @db.Decimal(10, 2)
+
+  order orders @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+}
+
+model promo_codes {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(50)
+  discount    Decimal  @db.Decimal(5, 2)
+  valid_from  DateTime @db.Timestamp(6)
+  valid_until DateTime @db.Timestamp(6)
+  max_uses    Int?
+  uses        Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([code])
+}
+
+model roles {
+  id    Int    @id @default(autoincrement())
+  name  String @unique @db.VarChar(50)
+  users users[]
+}
+
+model users {
+  id         Int      @id @default(autoincrement())
+  email      String   @unique @db.VarChar(255)
+  password   String   @db.VarChar(255)
+  role_id    Int?
+  role       roles?   @relation(fields: [role_id], references: [id], onDelete: SetNull)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+}
