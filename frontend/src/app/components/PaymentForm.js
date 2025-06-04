@@ -1,13 +1,16 @@
 "use client";
 import { useState } from 'react';
-import { CardElement } from '@stripe/react-stripe-js';
 import axios from 'axios';
 
-export default function PaymentForm({ orderId, amount, onSuccess, token, onTokenExpired }) {
+export default function PaymentForm({ orderId, amount, onSuccess, userEmail, onTokenExpired, loyaltyPoints, setLoyaltyPoints, cart }) {
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [promoCode, setPromoCode] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [pointsToRedeem, setPointsToRedeem] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  const maxRedeemablePoints = Math.min(loyaltyPoints, Math.floor(amount / 10) * 100);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -15,31 +18,50 @@ export default function PaymentForm({ orderId, amount, onSuccess, token, onToken
     setError(null);
 
     try {
-      const payload = {
-        order_id: orderId,
-        amount,
-        payment_method: paymentMethod,
-        promo_code: promoCode || undefined,
-      };
+      let response;
+      let payload;
 
       if (paymentMethod === 'card') {
-        payload.card_payment_id = `pm_card_visa_${Date.now()}`;
-      } else if (paymentMethod === 'mobile_app') {
-        payload.mobile_transaction_id = `mobile_${Date.now()}`;
-      }
-
-      let response;
-      try {
-        response = await axios.post('http://localhost:3003/api/payments', payload, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-      } catch (err) {
-        if (err.response?.status === 401 && token) {
-          response = await axios.post('http://localhost:3003/api/payments', payload);
-        } else {
-          console.error('Payment request failed:', err.message, err.config);
-          throw err;
+        if (cardNumber !== '4242424242424242') {
+          throw new Error('Nieprawidłowy numer karty. Użyj 4242424242424242 do testów.');
         }
+
+        payload = {
+          order_id: orderId,
+          amount,
+          payment_method: 'card',
+          promo_code: promoCode.trim() === '' ? undefined : promoCode,
+          transaction_id: `simulated_${Date.now()}`,
+          user_email: userEmail && userEmail.trim() !== '' ? userEmail : undefined,
+          points_to_redeem: pointsToRedeem || 0,
+          cart_items: cart.map(item => ({
+            product_id: Number(item.product.id),
+            quantity: Number(item.quantity),
+          })),
+        };
+
+        console.log('Wysyłanie żądania (card):', payload);
+        response = await axios.post('http://localhost:3003/api/payments', payload);
+      } else {
+        payload = {
+          order_id: orderId,
+          amount,
+          payment_method: paymentMethod,
+          promo_code: promoCode.trim() === '' ? undefined : promoCode,
+          user_email: userEmail && userEmail.trim() !== '' ? userEmail : undefined,
+          points_to_redeem: pointsToRedeem || 0,
+          cart_items: cart.map(item => ({
+            product_id: Number(item.product.id),
+            quantity: Number(item.quantity),
+          })),
+        };
+
+        if (paymentMethod === 'mobile_app') {
+          payload.mobile_transaction_id = `mobile_${Date.now()}`;
+        }
+
+        console.log('Wysyłanie żądania (inny sposób):', payload);
+        response = await axios.post('http://localhost:3003/api/payments', payload);
       }
 
       onSuccess(response.data.confirmation);
@@ -48,7 +70,7 @@ export default function PaymentForm({ orderId, amount, onSuccess, token, onToken
         onTokenExpired();
         setError('Sesja wygasła, zaloguj się ponownie');
       } else {
-        setError(`Błąd: ${err.response?.status || 'Network'} - ${err.message}`);
+        setError(`Błąd: ${err.response?.status || 'Network'} - ${err.response?.data?.error || err.message}`);
       }
     } finally {
       setLoading(false);
@@ -73,8 +95,14 @@ export default function PaymentForm({ orderId, amount, onSuccess, token, onToken
         </div>
         {paymentMethod === 'card' && (
           <div>
-            <label className="block text-red-600 font-medium">Dane karty:</label>
-            <CardElement className="p-2 border-2 border-red-600 rounded-md bg-white" />
+            <label className="block text-red-600 font-medium">Numer karty (test: 4242424242424242):</label>
+            <input
+              type="text"
+              value={cardNumber}
+              onChange={(e) => setCardNumber(e.target.value)}
+              placeholder="Wprowadź numer karty"
+              className="w-full p-2 border-2 border-red-600 rounded-md bg-white text-black placeholder-gray-500"
+            />
           </div>
         )}
         <div>
@@ -87,13 +115,39 @@ export default function PaymentForm({ orderId, amount, onSuccess, token, onToken
             className="w-full p-2 border-2 border-red-600 rounded-md bg-white text-black placeholder-gray-500"
           />
         </div>
+        {userEmail && (
+          <div>
+            <label className="block text-red-600 font-medium">
+              Punkty lojalnościowe (dostępne: {loyaltyPoints})
+            </label>
+            <input
+              type="number"
+              value={pointsToRedeem}
+              onChange={(e) => {
+                const value = parseInt(e.target.value) || 0;
+                if (value >= 0 && value <= maxRedeemablePoints) {
+                  setPointsToRedeem(value);
+                }
+              }}
+              placeholder="Wprowadź punkty"
+              className="w-full p-2 border-2 border-red-600 rounded-md bg-white text-black placeholder-gray-500"
+              min="0"
+              max={maxRedeemablePoints}
+            />
+            {pointsToRedeem > 0 && (
+              <p className="text-sm text-red-600 mt-1">
+                Zniżka: {Math.floor(pointsToRedeem / 100) * 10} PLN
+              </p>
+            )}
+          </div>
+        )}
         {error && <p className="text-red-600">{error}</p>}
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || (paymentMethod === 'card' && !cardNumber)}
           className="w-full py-2 bg-red-600 text-white rounded-md hover:bg-red-500 transition font-semibold disabled:bg-gray-400"
         >
-          {loading ? 'Przetwarzanie...' : 'Zapłać'}
+          {loading ? 'Przetwarzanie...' : `Zapłać ${Math.max(0, amount - Math.floor(pointsToRedeem / 100) * 10)} PLN`}
         </button>
       </form>
     </div>

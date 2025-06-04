@@ -15,6 +15,7 @@ export default function Home() {
   const [roleId, setRoleId] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [userEmail, setUserEmail] = useState(''); // Przechowujemy email użytkownika
   const [newProduct, setNewProduct] = useState({
     name: '',
     price: '',
@@ -32,18 +33,24 @@ export default function Home() {
     postalCode: '',
   });
   const [showRegister, setShowRegister] = useState(false);
-  const [loyaltyPoints, setLoyaltyPoints] = useState(0); // Added
+  const [loyaltyPoints, setLoyaltyPoints] = useState(0);
 
   useEffect(() => {
     const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const storedEmail = typeof window !== 'undefined' ? document.cookie.split('; ').find(row => row.startsWith('userEmail='))?.split('=')[1] : null;
+
     if (storedToken) {
       setToken(storedToken);
       try {
         const decoded = jwt.decode(storedToken);
         setRoleId(decoded?.role_id || null);
+        setEmail(decoded?.email || '');
+        setUserEmail(storedEmail || decoded?.email || '');
       } catch (err) {
         console.error('Błąd dekodowania tokenu:', err);
         setRoleId(null);
+        setEmail('');
+        setUserEmail('');
       }
     }
 
@@ -59,11 +66,9 @@ export default function Home() {
     };
 
     const fetchLoyaltyPoints = async () => {
-      if (storedToken) {
+      if (storedEmail) {
         try {
-          const response = await axios.get('http://localhost:3004/api/loyalty/balance', {
-            headers: { Authorization: `Bearer ${storedToken}` },
-          });
+          const response = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${storedEmail}`);
           setLoyaltyPoints(response.data.points || 0);
         } catch (err) {
           console.error('Błąd pobierania punktów lojalnościowych:', err.response?.data || err.message);
@@ -85,21 +90,25 @@ export default function Home() {
       const { token } = response.data;
       setToken(token);
       localStorage.setItem('token', token);
+
+      // Zapisz email w ciasteczkach
+      const decoded = jwt.decode(token);
+      const userEmail = decoded?.email || '';
+      document.cookie = `userEmail=${userEmail}; path=/; max-age=86400`; // Ciasteczko ważne przez 1 dzień
+      setUserEmail(userEmail);
+
+      setRoleId(decoded?.role_id || null);
+      setEmail(decoded?.email || '');
+
+      // Pobierz punkty lojalnościowe po zalogowaniu
       try {
-        const decoded = jwt.decode(token);
-        setRoleId(decoded?.role_id || null);
-      } catch (err) {
-        console.error('Błąd dekodowania tokenu w login:', err);
-      }
-      try {
-        const pointsResponse = await axios.get('http://localhost:3004/api/loyalty/balance', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const pointsResponse = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${userEmail}`);
         setLoyaltyPoints(pointsResponse.data.points || 0);
       } catch (err) {
         console.error('Błąd pobierania punktów po login:', err.response?.data || err.message);
         setLoyaltyPoints(0);
       }
+
       alert('Zalogowano!');
       setEmail('');
       setPassword('');
@@ -112,8 +121,12 @@ export default function Home() {
   const logout = () => {
     setToken(null);
     setRoleId(null);
-    setLoyaltyPoints(0); // Added
+    setLoyaltyPoints(0);
+    setEmail('');
+    setUserEmail('');
     localStorage.removeItem('token');
+    // Usuń ciasteczko
+    document.cookie = 'userEmail=; path=/; max-age=0';
     alert('Wylogowano');
   };
 
@@ -130,9 +143,10 @@ export default function Home() {
       alert('Wypełnij wszystkie pola adresu dla dostawy');
       return;
     }
-  
+
     try {
       const payload = {
+        userId: userEmail || 'guest',
         delivery_option: deliveryOption,
         items: cart.map(item => ({
           productId: item.product.id,
@@ -140,7 +154,7 @@ export default function Home() {
           customizations: item.customizations,
         })),
       };
-  
+
       if (deliveryOption === 'on-site') {
         payload.table_number = parseInt(tableNumber) || 1;
       } else if (deliveryOption === 'delivery') {
@@ -150,7 +164,7 @@ export default function Home() {
           postalCode: deliveryAddress.postalCode,
         };
       }
-  
+
       const response = await axios.post('http://localhost:3002/api/orders', payload, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -167,13 +181,20 @@ export default function Home() {
   };
 
   const handlePaymentSuccess = (confirmation) => {
-    setLoyaltyPoints((prev) => prev + (confirmation.pointsEarned || 0) - (confirmation.pointsRedeemed || 0)); // Added
+    setLoyaltyPoints((prev) => prev);
     alert(`Zamówienie złożone i opłacone! Potwierdzenie: ${JSON.stringify(confirmation)}`);
     setCart([]);
     setOrderId(null);
     setOrderAmount(null);
     setTableNumber('');
     setDeliveryAddress({ street: '', city: '', postalCode: '' });
+
+    // Odśwież punkty lojalnościowe po płatności
+    if (userEmail) {
+      axios.get(`http://localhost:3004/api/loyalty/balance?email=${userEmail}`)
+        .then(response => setLoyaltyPoints(response.data.points || 0))
+        .catch(err => console.error('Błąd odświeżania punktów:', err));
+    }
   };
 
   const addProduct = async () => {
@@ -294,7 +315,7 @@ export default function Home() {
         {token && (
           <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-red-600">
             <div className="flex justify-between items-center">
-              <span className="text-red-600 font-medium">Punkty lojalnościowe: {loyaltyPoints}</span> {/* Added */}
+              <span className="text-red-600 font-medium">Punkty lojalnościowe: {loyaltyPoints}</span>
               <button
                 onClick={logout}
                 className="py-2 px-4 bg-gray-600 text-white rounded-md hover:bg-gray-500 transition font-semibold"
@@ -350,7 +371,7 @@ export default function Home() {
                 </div>
                 <button
                   onClick={addProduct}
-                  className="mt-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-500 transition font-semibold"
+                  className="mt-4 py-2 bg-red-6s00 text-white rounded-md hover:bg-red-500 transition font-semibold"
                 >
                   Dodaj produkt
                 </button>
@@ -446,10 +467,10 @@ export default function Home() {
               orderId={orderId}
               amount={orderAmount}
               onSuccess={handlePaymentSuccess}
-              token={token}
+              userEmail={userEmail}
               onTokenExpired={logout}
-              loyaltyPoints={loyaltyPoints} // Added
-              setLoyaltyPoints={setLoyaltyPoints} // Added
+              loyaltyPoints={loyaltyPoints}
+              setLoyaltyPoints={setLoyaltyPoints}
               cart={cart}
             />
           )}

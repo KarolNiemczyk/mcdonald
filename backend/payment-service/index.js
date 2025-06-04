@@ -3,150 +3,167 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { body, validationResult } = require('express-validator');
 const { PrismaClient } = require('@prisma/client');
-const Stripe = require('stripe');
-const jwt = require('jsonwebtoken');
+const axios = require('axios');
 
 const app = express();
 const port = process.env.PORT || 3003;
 const prisma = new PrismaClient();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+}));
 app.use(helmet());
 app.use(express.json());
 
-const authenticate = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-      next();
-    } catch (error) {
-      return res.status(401).json({ error: 'Nieprawidłowy lub wygasły token' });
-    }
-  } else {
-    next();
-  }
-};
+// Logowanie przychodzącego body dla debugowania
+app.use((req, res, next) => {
+  console.log('Incoming request body:', req.body);
+  next();
+});
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Coś poszło nie tak!' });
 });
 
-// Test route
 app.get('/api/test', (req, res) => {
   res.json({ status: 'Payment Service OK', timestamp: new Date().toISOString() });
 });
 
 app.post(
   '/api/payments',
-  authenticate,
   [
     body('order_id').isInt({ min: 1 }).withMessage('Nieprawidłowy ID zamówienia'),
     body('amount').isFloat({ min: 0 }).withMessage('Kwota musi być dodatnia'),
     body('payment_method').isIn(['card', 'cash', 'mobile_app']).withMessage('Nieprawidłowa metoda płatności'),
     body('promo_code').optional().isString().isLength({ max: 50 }).withMessage('Nieprawidłowy kod promocyjny'),
-    body('card_payment_id').if(body('payment_method').equals('card')).isString().withMessage('Nieprawidłowy ID płatności kartą'),
-    body('mobile_transaction_id').if(body('payment_method').equals('mobile_app')).isString().withMessage('Nieprawidłowy ID transakcji mobilnej')
+    body('mobile_transaction_id').if(body('payment_method').equals('mobile_app')).isString().withMessage('Nieprawidłowy ID transakcji mobilnej'),
+    body('transaction_id').if(body('payment_method').equals('card')).isString().withMessage('Nieprawidłowy ID transakcji'),
+    body('user_email').optional().isEmail().withMessage('Nieprawidłowy email użytkownika'),
+    body('points_to_redeem').optional().isInt({ min: 0 }).withMessage('Punkty do wykorzystania muszą być liczbą nieujemną'),
+    body('cart_items').isArray().withMessage('Cart items muszą być tablicą'),
+    body('cart_items.*.product_id').isInt({ min: 1 }).withMessage('ID produktu musi być liczbą dodatnią'),
+    body('cart_items.*.quantity').isInt({ min: 1 }).withMessage('Ilość musi być liczbą dodatnią'),
   ],
   async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array());
       return res.status(400).json({ errors: errors.array() });
     }
 
     try {
-      const { order_id, amount, payment_method, promo_code, card_payment_id, mobile_transaction_id } = req.body;
+      const { order_id, amount, payment_method, promo_code, mobile_transaction_id, transaction_id, user_email, points_to_redeem, cart_items } = req.body;
+
+      const existingPayment = await prisma.payments.findUnique({
+        where: { order_id },
+      });
+      if (existingPayment) {
+        return res.status(400).json({ error: 'Płatność dla tego zamówienia już istnieje' });
+      }
 
       const order = await prisma.orders.findUnique({
-        where: { id: order_id }
+        where: { id: order_id },
       });
       if (!order) {
         return res.status(400).json({ error: 'Zamówienie nie istnieje' });
       }
 
-      let discount = 0;
+      let promoDiscount = 0;
       if (promo_code) {
         const promoCode = await prisma.promo_codes.findUnique({
-          where: { code: promo_code }
+          where: { code: promo_code },
         });
-        if (!promoCode || promoCode.uses >= promoCode.max_uses || new Date() > promoCode.valid_until) {
+        if (!promoCode || (promoCode.max_uses && promoCode.uses >= promoCode.max_uses) || new Date() > promoCode.valid_until) {
           return res.status(400).json({ error: 'Nieprawidłowy lub wygasły kod promocyjny' });
         }
-        discount = promoCode.discount;
+        promoDiscount = parseFloat(promoCode.discount);
       }
+
+      const pointsDiscount = points_to_redeem ? Math.floor(points_to_redeem / 100) * 10 : 0;
+      const totalDiscount = promoDiscount + pointsDiscount;
+      const finalAmount = Math.max(0, amount - totalDiscount);
 
       let payment;
       if (payment_method === 'card') {
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round((amount - discount) * 100),
-          currency: 'pln',
-          payment_method: card_payment_id,
-          confirm: true,
-          return_url: 'http://localhost:3000'
-        });
-
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount,
+            amount: parseFloat(amount),
             payment_method,
-            status: paymentIntent.status === 'succeeded' ? 'completed' : 'failed',
-            transaction_id: paymentIntent.id,
+            status: 'completed',
+            transaction_id,
             promo_code,
-            discount_amount: discount
-          }
+            discount_amount: totalDiscount,
+          },
         });
       } else if (payment_method === 'cash') {
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount,
+            amount: parseFloat(amount),
             payment_method,
-            status: 'pending',
+            status: 'completed',
             transaction_id: null,
             promo_code,
-            discount_amount: discount
-          }
+            discount_amount: totalDiscount,
+          },
         });
       } else if (payment_method === 'mobile_app') {
-        const simulatedMobileResponse = { transactionId: mobile_transaction_id || `mobile_${Date.now()}` };
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount,
+            amount: parseFloat(amount),
             payment_method,
             status: 'completed',
-            transaction_id: simulatedMobileResponse.transactionId,
+            transaction_id: mobile_transaction_id || `mobile_${Date.now()}`,
             promo_code,
-            discount_amount: discount
-          }
+            discount_amount: totalDiscount,
+          },
         });
       }
 
       if (payment.status === 'completed' && promo_code) {
         await prisma.promo_codes.update({
           where: { code: promo_code },
-          data: { uses: { increment: 1 } }
+          data: { uses: { increment: 1 } },
         });
+      }
+
+      if (user_email && payment.status === 'completed') {
+        if (points_to_redeem > 0) {
+          await axios.post('http://loyalty-service:3004/api/loyalty/redeem', {
+            email: user_email,
+            points: points_to_redeem,
+          });
+        }
+
+        const pointsEarned = Math.floor(finalAmount);
+        if (pointsEarned > 0) {
+          await axios.post('http://loyalty-service:3004/api/loyalty/award', {
+            email: user_email,
+            points: pointsEarned,
+            order_id: order_id,
+            amount: finalAmount,
+            items: cart_items,
+          });
+        }
       }
 
       const confirmation = {
         order_id,
         payment_id: payment.id,
-        amount: payment.amount,
-        discount: discount,
+        amount: finalAmount,
+        discount: totalDiscount,
         payment_method,
         status: payment.status,
-        timestamp: payment.created_at
+        timestamp: payment.created_at,
       };
 
       res.status(201).json({ payment, confirmation });
     } catch (error) {
+      console.error('Payment error:', error);
       next(error);
     }
   }

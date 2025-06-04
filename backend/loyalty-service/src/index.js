@@ -2,8 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const mongoose = require('mongoose');
-const { body, validationResult } = require('express-validator');
-const { authenticate } = require('./auth');
+const { body, validationResult, query } = require('express-validator');
 const LoyaltyPoints = require('./models/LoyaltyPoints');
 
 const app = express();
@@ -14,7 +13,10 @@ mongoose.connect(mongoUri, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+}));
 app.use(helmet());
 app.use(express.json());
 
@@ -23,10 +25,24 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Coś poszło nie tak!' });
 });
 
+// Test endpoint to create a dummy record
+app.get('/api/loyalty/test', async (req, res) => {
+  try {
+    const testRecord = await LoyaltyPoints.create({
+      user_id: 'test_user@example.com',
+      points: 0,
+      order_history: [],
+    });
+    res.status(200).json({ message: 'Test record created', record: testRecord });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post(
   '/api/loyalty/award',
-  authenticate,
   [
+    body('email').isEmail().withMessage('Email musi być poprawnym adresem email'),
     body('points').isInt({ min: 0 }).withMessage('Punkty muszą być liczbą nieujemną'),
     body('order_id').isInt().withMessage('ID zamówienia musi być liczbą całkowitą'),
     body('amount').isFloat({ min: 0 }).withMessage('Kwota musi być liczbą dodatnią'),
@@ -41,28 +57,50 @@ app.post(
     }
 
     try {
-      const { user_id } = req.user;
-      const { points, order_id, amount, items } = req.body;
+      const { email, points, order_id, amount, items } = req.body;
 
-      const loyaltyRecord = await LoyaltyPoints.findOneAndUpdate(
-        { user_id },
-        {
-          $inc: { points },
-          $push: {
-            order_history: {
+      let loyaltyRecord = await LoyaltyPoints.findOne({ user_id: email });
+
+      let updatedRecord;
+      if (loyaltyRecord) {
+        // User exists, update points and order history
+        updatedRecord = await LoyaltyPoints.findOneAndUpdate(
+          { user_id: email },
+          {
+            $inc: { points },
+            $push: {
+              order_history: {
+                order_id,
+                amount,
+                items,
+                timestamp: new Date(),
+              },
+            },
+            $set: { updated_at: new Date() },
+          },
+          { new: true }
+        );
+      } else {
+        // User doesn't exist, create new record with initial points
+        updatedRecord = await LoyaltyPoints.create({
+          user_id: email,
+          points,
+          order_history: [
+            {
               order_id,
               amount,
               items,
               timestamp: new Date(),
             },
-          },
-          $set: { updated_at: new Date() },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+          ],
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
 
-      res.status(200).json({ message: 'Punkty przyznane', points: loyaltyRecord.points });
+      res.status(200).json({ message: 'Punkty przyznane', points: updatedRecord.points });
     } catch (error) {
+      console.error('Award points error:', error);
       res.status(500).json({ error: error.message });
     }
   }
@@ -70,8 +108,8 @@ app.post(
 
 app.post(
   '/api/loyalty/redeem',
-  authenticate,
   [
+    body('email').isEmail().withMessage('Email musi być poprawnym adresem email'),
     body('points').isInt({ min: 1 }).withMessage('Punkty muszą być liczbą dodatnią'),
   ],
   async (req, res) => {
@@ -81,16 +119,15 @@ app.post(
     }
 
     try {
-      const { user_id } = req.user;
-      const { points } = req.body;
+      const { email, points } = req.body;
 
-      const loyaltyRecord = await LoyaltyPoints.findOne({ user_id });
+      const loyaltyRecord = await LoyaltyPoints.findOne({ user_id: email });
       if (!loyaltyRecord || loyaltyRecord.points < points) {
         return res.status(400).json({ error: 'Niewystarczająca liczba punktów' });
       }
 
       const updatedRecord = await LoyaltyPoints.findOneAndUpdate(
-        { user_id },
+        { user_id: email },
         { $inc: { points: -points }, $set: { updated_at: new Date() } },
         { new: true }
       );
@@ -102,3 +139,45 @@ app.post(
     }
   }
 );
+
+app.get(
+  '/api/loyalty/balance',
+  [
+    query('email').isEmail().withMessage('Email musi być poprawnym adresem email'),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const { email } = req.query;
+
+      let loyaltyRecord = await LoyaltyPoints.findOne({ user_id: email });
+
+      if (!loyaltyRecord) {
+        loyaltyRecord = await LoyaltyPoints.create({
+          user_id: email,
+          points: 0,
+          order_history: [],
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+
+      res.status(200).json({ points: loyaltyRecord.points });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.listen(port, () => {
+  console.log(`Loyalty Service listening at http://localhost:${port}`);
+});
+
+process.on('SIGTERM', async () => {
+  await mongoose.connection.close();
+  process.exit(0);
+});

@@ -13,7 +13,7 @@ const orderHistorySchema = new mongoose.Schema({
 });
 
 const loyaltyPointsSchema = new mongoose.Schema({
-  user_id: { type: Number, required: true, unique: true, index: true },
+  user_id: { type: String, required: true, unique: true, index: true },
   points: { type: Number, default: 0, min: 0 },
   order_history: [orderHistorySchema],
   created_at: { type: Date, default: Date.now },

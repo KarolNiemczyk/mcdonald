@@ -6,19 +6,30 @@ const { validationResult } = require('express-validator');
 const prisma = new PrismaClient();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-      next();
-    } catch (error) {
-      return res.status(401).json({ error: 'Nieprawidłowy lub wygasły token' });
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Brak tokenu autoryzacji' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await prisma.users.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, role_id: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'Użytkownik nie istnieje' });
     }
-  } else {
+
+    req.user = { id: user.id, email: user.email, role_id: user.role_id };
+    console.log(`Authenticated user: ${user.email} (ID: ${user.id}, Role: ${user.role_id})`);
     next();
+  } catch (error) {
+    console.error('Authentication error:', error.message);
+    return res.status(401).json({ error: 'Nieprawidłowy lub wygasły token' });
   }
 };
 
@@ -46,6 +57,7 @@ const verifyToken = async (req, res, next) => {
 
     res.status(200).json({ user: { id: user.id, email: user.email, role_id: user.role_id } });
   } catch (error) {
+    console.error('Token verification error:', error.message);
     res.status(401).json({ error: 'Nieprawidłowy lub wygasły token' });
   }
 };
@@ -62,7 +74,8 @@ const login = async (req, res, next) => {
       where: { email },
       select: { id: true, email: true, password: true, role_id: true },
     });
-    if (!user || !await bcrypt.compare(password, user.password)) {
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
     }
 
@@ -71,8 +84,11 @@ const login = async (req, res, next) => {
       JWT_SECRET,
       { expiresIn: '1h' }
     );
+
+    console.log(`User logged in: ${user.email} (ID: ${user.id}, Role: ${user.role_id})`);
     res.json({ token, user: { id: user.id, email: user.email, role_id: user.role_id } });
   } catch (error) {
+    console.error('Login error:', error.message);
     next(error);
   }
 };
@@ -92,11 +108,15 @@ const register = async (req, res, next) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const customerRole = await prisma.roles.findUnique({ where: { name: 'customer' } });
+    if (!customerRole) {
+      return res.status(500).json({ error: 'Rola "customer" nie istnieje w bazie danych' });
+    }
+
     const user = await prisma.users.create({
       data: {
         email,
         password: hashedPassword,
-        role_id: customerRole?.id || 2,
+        role_id: customerRole.id,
       },
       select: { id: true, email: true, role_id: true },
     });
@@ -106,8 +126,11 @@ const register = async (req, res, next) => {
       JWT_SECRET,
       { expiresIn: '1h' }
     );
+
+    console.log(`User registered: ${user.email} (ID: ${user.id}, Role: ${user.role_id})`);
     res.status(201).json({ token, user: { id: user.id, email: user.email, role_id: user.role_id } });
   } catch (error) {
+    console.error('Registration error:', error.message);
     next(error);
   }
 };
