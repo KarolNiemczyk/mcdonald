@@ -27,6 +27,32 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Coś poszło nie tak!' });
 });
 
+// Nowy endpoint do walidacji kodu promocyjnego
+app.post('/api/promo/validate', [
+  body('code').isString().notEmpty().withMessage('Kod promocyjny jest wymagany'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: errors.array()[0].msg });
+  }
+
+  try {
+    const { code } = req.body;
+    const promoCode = await prisma.promo_codes.findUnique({
+      where: { code },
+    });
+
+    if (!promoCode || (promoCode.max_uses && promoCode.uses >= promoCode.max_uses) || new Date() > promoCode.valid_until) {
+      return res.status(400).json({ error: 'Nieprawidłowy lub wygasły kod promocyjny' });
+    }
+
+    res.json({ discount: parseFloat(promoCode.discount) });
+  } catch (error) {
+    console.error('Promo validation error:', error);
+    res.status(500).json({ error: 'Błąd serwera przy walidacji kodu' });
+  }
+});
+
 app.get('/api/test', (req, res) => {
   res.json({ status: 'Payment Service OK', timestamp: new Date().toISOString() });
 });
@@ -78,10 +104,10 @@ app.post(
         if (!promoCode || (promoCode.max_uses && promoCode.uses >= promoCode.max_uses) || new Date() > promoCode.valid_until) {
           return res.status(400).json({ error: 'Nieprawidłowy lub wygasły kod promocyjny' });
         }
-        promoDiscount = parseFloat(promoCode.discount);
+        promoDiscount = Math.min(amount, parseFloat(promoCode.discount)); // Ograniczenie zniżki
       }
 
-      const pointsDiscount = points_to_redeem ? Math.floor(points_to_redeem / 100) * 10 : 0;
+      const pointsDiscount = points_to_redeem ? Math.min(amount - promoDiscount, Math.floor(points_to_redeem / 100) * 10) : 0;
       const totalDiscount = promoDiscount + pointsDiscount;
       const finalAmount = Math.max(0, amount - totalDiscount);
 
@@ -90,7 +116,7 @@ app.post(
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: parseFloat(amount),
+            amount: finalAmount,
             payment_method,
             status: 'completed',
             transaction_id,
@@ -102,7 +128,7 @@ app.post(
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: parseFloat(amount),
+            amount: finalAmount,
             payment_method,
             status: 'completed',
             transaction_id: null,
@@ -114,7 +140,7 @@ app.post(
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: parseFloat(amount),
+            amount: finalAmount,
             payment_method,
             status: 'completed',
             transaction_id: mobile_transaction_id || `mobile_${Date.now()}`,
