@@ -25,7 +25,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Coś poszło nie tak!' });
 });
 
-// Test endpoint to create a dummy record
 app.get('/api/loyalty/test', async (req, res) => {
   try {
     const testRecord = await LoyaltyPoints.create({
@@ -63,7 +62,6 @@ app.post(
 
       let updatedRecord;
       if (loyaltyRecord) {
-        // User exists, update points and order history
         updatedRecord = await LoyaltyPoints.findOneAndUpdate(
           { user_id: email },
           {
@@ -81,7 +79,6 @@ app.post(
           { new: true }
         );
       } else {
-        // User doesn't exist, create new record with initial points
         updatedRecord = await LoyaltyPoints.create({
           user_id: email,
           points,
@@ -131,7 +128,7 @@ app.post(
         { $inc: { points: -points }, $set: { updated_at: new Date() } },
         { new: true }
       );
-      const discount = Math.floor(points / 100) * 10; // 100 points = 10 PLN zniżki
+      const discount = points / 10; // 1 punkt = 0.10 PLN (10 punktów = 1 PLN)
 
       res.status(200).json({ message: 'Punkty zrealizowane', discount, remainingPoints: updatedRecord.points });
     } catch (error) {
@@ -168,6 +165,65 @@ app.get(
 
       res.status(200).json({ points: loyaltyRecord.points });
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.get(
+  '/api/loyalty/most_ordered',
+  [
+    query('email').isEmail().withMessage('Email musi być poprawnym adresem email'),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+      const { email } = req.query;
+      const loyaltyRecord = await LoyaltyPoints.findOne({ user_id: email });
+
+      if (!loyaltyRecord || !loyaltyRecord.order_history || loyaltyRecord.order_history.length === 0) {
+        console.log('Brak historii zamówień dla użytkownika:', email);
+        return res.status(404).json({ error: 'Brak historii zamówień' });
+      }
+
+      // Analiza historii zamówień
+      const productCounts = {};
+      loyaltyRecord.order_history.forEach(order => {
+        order.items.forEach(item => {
+          const productId = item.product_id || item.productId; // Obsługa różnych formatów
+          if (productId) {
+            productCounts[productId] = (productCounts[productId] || 0) + (item.quantity || 1);
+          } else {
+            console.warn('Brak productId w elemencie zamówienia:', item);
+          }
+        });
+      });
+
+      console.log('Product counts:', productCounts);
+
+      // Znalezienie produktu z największą liczbą zamówień
+      let mostOrderedProductId = null;
+      let maxCount = 0;
+      for (const [productId, count] of Object.entries(productCounts)) {
+        if (count > maxCount) {
+          maxCount = count;
+          mostOrderedProductId = productId;
+        }
+      }
+
+      if (!mostOrderedProductId) {
+        console.log('Brak najczęściej zamawianego produktu dla użytkownika:', email);
+        return res.status(404).json({ error: 'Brak najczęściej zamawianego produktu' });
+      }
+
+      console.log('Most ordered product ID:', mostOrderedProductId, 'Count:', maxCount);
+      res.status(200).json({mostOrderedProductId});
+    } catch (error) {
+      console.error('Error fetching most ordered:', error);
       res.status(500).json({ error: error.message });
     }
   }

@@ -11,9 +11,9 @@ export default function PaymentForm({ orderId, amount, onSuccess, userEmail, onT
   const [error, setError] = useState(null);
   const [promoDiscount, setPromoDiscount] = useState(0);
   const [pointsDiscount, setPointsDiscount] = useState(0);
-  const [localLoyaltyPoints, setLocalLoyaltyPoints] = useState(initialLoyaltyPoints || 0); // Domyślna wartość 0
+  const [localLoyaltyPoints, setLocalLoyaltyPoints] = useState(initialLoyaltyPoints || 0);
 
-  const maxRedeemablePoints = Math.min(localLoyaltyPoints, Math.floor(amount / 10) * 100);
+  const maxRedeemablePoints = Math.min(localLoyaltyPoints, Math.floor(amount * 10)); // 1 PLN = 10 punktów
   const totalDiscount = Math.min(amount, promoDiscount + pointsDiscount);
   const finalAmount = Math.max(0, amount - totalDiscount);
 
@@ -82,7 +82,7 @@ export default function PaymentForm({ orderId, amount, onSuccess, userEmail, onT
           promo_code: promoCode.trim() === '' ? undefined : promoCode,
           transaction_id: `simulated_${Date.now()}`,
           user_email: userEmail && userEmail.trim() !== '' ? userEmail : undefined,
-          points_to_redeem: pointsToRedeem || 0,
+          points_redeemed: pointsToRedeem || 0, // Informacja o punktach, ale bez ponownego odejmowania
           cart_items: cart.map(item => ({
             product_id: Number(item.product.id),
             quantity: Number(item.quantity),
@@ -98,7 +98,7 @@ export default function PaymentForm({ orderId, amount, onSuccess, userEmail, onT
           payment_method: paymentMethod,
           promo_code: promoCode.trim() === '' ? undefined : promoCode,
           user_email: userEmail && userEmail.trim() !== '' ? userEmail : undefined,
-          points_to_redeem: pointsToRedeem || 0,
+          points_redeemed: pointsToRedeem || 0,
           cart_items: cart.map(item => ({
             product_id: Number(item.product.id),
             quantity: Number(item.quantity),
@@ -113,12 +113,12 @@ export default function PaymentForm({ orderId, amount, onSuccess, userEmail, onT
         response = await axios.post('http://localhost:3003/api/payments', payload);
       }
 
-      // Synchronizacja punktów po płatności
-      if (userEmail && pointsToRedeem > 0) {
+      // Synchronizacja punktów po płatności (tylko sprawdzenie stanu)
+      if (userEmail) {
         const balanceResponse = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${userEmail}`);
         setLocalLoyaltyPoints(balanceResponse.data.points);
+        setLoyaltyPoints(balanceResponse.data.points); // Propagacja do rodzica
       }
-      setLoyaltyPoints(localLoyaltyPoints); // Propagacja do rodzica
       onSuccess(response.data.confirmation);
     } catch (err) {
       if (err.response?.status === 400 && err.response?.data?.error === 'Płatność dla tego zamówienia już istnieje') {

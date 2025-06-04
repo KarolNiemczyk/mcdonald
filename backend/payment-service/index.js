@@ -16,7 +16,6 @@ app.use(cors({
 app.use(helmet());
 app.use(express.json());
 
-// Logowanie przychodzącego body dla debugowania
 app.use((req, res, next) => {
   console.log('Incoming request body:', req.body);
   next();
@@ -27,7 +26,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Coś poszło nie tak!' });
 });
 
-// Nowy endpoint do walidacji kodu promocyjnego
 app.post('/api/promo/validate', [
   body('code').isString().notEmpty().withMessage('Kod promocyjny jest wymagany'),
 ], async (req, res) => {
@@ -67,7 +65,7 @@ app.post(
     body('mobile_transaction_id').if(body('payment_method').equals('mobile_app')).isString().withMessage('Nieprawidłowy ID transakcji mobilnej'),
     body('transaction_id').if(body('payment_method').equals('card')).isString().withMessage('Nieprawidłowy ID transakcji'),
     body('user_email').optional().isEmail().withMessage('Nieprawidłowy email użytkownika'),
-    body('points_to_redeem').optional().isInt({ min: 0 }).withMessage('Punkty do wykorzystania muszą być liczbą nieujemną'),
+    body('points_redeemed').optional().isInt({ min: 0 }).withMessage('Punkty do wykorzystania muszą być liczbą nieujemną'),
     body('cart_items').isArray().withMessage('Cart items muszą być tablicą'),
     body('cart_items.*.product_id').isInt({ min: 1 }).withMessage('ID produktu musi być liczbą dodatnią'),
     body('cart_items.*.quantity').isInt({ min: 1 }).withMessage('Ilość musi być liczbą dodatnią'),
@@ -80,7 +78,7 @@ app.post(
     }
 
     try {
-      const { order_id, amount, payment_method, promo_code, mobile_transaction_id, transaction_id, user_email, points_to_redeem, cart_items } = req.body;
+      const { order_id, amount, payment_method, promo_code, mobile_transaction_id, transaction_id, user_email, points_redeemed, cart_items } = req.body;
 
       const existingPayment = await prisma.payments.findUnique({
         where: { order_id },
@@ -96,56 +94,41 @@ app.post(
         return res.status(400).json({ error: 'Zamówienie nie istnieje' });
       }
 
-      let promoDiscount = 0;
-      if (promo_code) {
-        const promoCode = await prisma.promo_codes.findUnique({
-          where: { code: promo_code },
-        });
-        if (!promoCode || (promoCode.max_uses && promoCode.uses >= promoCode.max_uses) || new Date() > promoCode.valid_until) {
-          return res.status(400).json({ error: 'Nieprawidłowy lub wygasły kod promocyjny' });
-        }
-        promoDiscount = Math.min(amount, parseFloat(promoCode.discount)); // Ograniczenie zniżki
-      }
-
-      const pointsDiscount = points_to_redeem ? Math.min(amount - promoDiscount, Math.floor(points_to_redeem / 100) * 10) : 0;
-      const totalDiscount = promoDiscount + pointsDiscount;
-      const finalAmount = Math.max(0, amount - totalDiscount);
-
       let payment;
       if (payment_method === 'card') {
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: finalAmount,
+            amount, // Używamy przesłanej kwoty (finalAmount z frontendu)
             payment_method,
             status: 'completed',
             transaction_id,
             promo_code,
-            discount_amount: totalDiscount,
+            discount_amount: amount - order.total_price, // Zakładamy, że order.total_amount to kwota przed zniżkami
           },
         });
       } else if (payment_method === 'cash') {
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: finalAmount,
+            amount,
             payment_method,
             status: 'completed',
             transaction_id: null,
             promo_code,
-            discount_amount: totalDiscount,
+            discount_amount: amount - order.total_amount,
           },
         });
       } else if (payment_method === 'mobile_app') {
         payment = await prisma.payments.create({
           data: {
             order_id,
-            amount: finalAmount,
+            amount,
             payment_method,
             status: 'completed',
             transaction_id: mobile_transaction_id || `mobile_${Date.now()}`,
             promo_code,
-            discount_amount: totalDiscount,
+            discount_amount: amount - order.total_amount,
           },
         });
       }
@@ -158,20 +141,13 @@ app.post(
       }
 
       if (user_email && payment.status === 'completed') {
-        if (points_to_redeem > 0) {
-          await axios.post('http://loyalty-service:3004/api/loyalty/redeem', {
-            email: user_email,
-            points: points_to_redeem,
-          });
-        }
-
-        const pointsEarned = Math.floor(finalAmount);
+        const pointsEarned = Math.floor(amount);
         if (pointsEarned > 0) {
           await axios.post('http://loyalty-service:3004/api/loyalty/award', {
             email: user_email,
             points: pointsEarned,
             order_id: order_id,
-            amount: finalAmount,
+            amount: amount,
             items: cart_items,
           });
         }
@@ -180,8 +156,8 @@ app.post(
       const confirmation = {
         order_id,
         payment_id: payment.id,
-        amount: finalAmount,
-        discount: totalDiscount,
+        amount: amount,
+        discount: amount - order.total_amount,
         payment_method,
         status: payment.status,
         timestamp: payment.created_at,

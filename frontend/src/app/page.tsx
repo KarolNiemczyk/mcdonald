@@ -15,7 +15,7 @@ export default function Home() {
   const [roleId, setRoleId] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [userEmail, setUserEmail] = useState(''); // Przechowujemy email użytkownika
+  const [userEmail, setUserEmail] = useState('');
   const [newProduct, setNewProduct] = useState({
     name: '',
     price: '',
@@ -34,6 +34,7 @@ export default function Home() {
   });
   const [showRegister, setShowRegister] = useState(false);
   const [loyaltyPoints, setLoyaltyPoints] = useState(0);
+  const [mostOrderedProduct, setMostOrderedProduct] = useState(null);
 
   useEffect(() => {
     const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -54,32 +55,50 @@ export default function Home() {
       }
     }
 
-    const fetchMenu = async () => {
+    const fetchData = async () => {
       try {
+        setLoading(true);
         const menuResponse = await axios.get('http://localhost:3001/api/menu');
         setMenu(menuResponse.data);
-        setLoading(false);
-      } catch (err) {
-        setError('Nie udało się pobrać danych');
-        setLoading(false);
-      }
-    };
 
-    const fetchLoyaltyPoints = async () => {
-      if (storedEmail) {
-        try {
-          const response = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${storedEmail}`);
-          setLoyaltyPoints(response.data.points || 0);
-        } catch (err) {
-          console.error('Błąd pobierania punktów lojalnościowych:', err.response?.data || err.message);
-          setLoyaltyPoints(0);
+        if (storedEmail) {
+          const pointsResponse = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${storedEmail}`);
+          setLoyaltyPoints(pointsResponse.data.points || 0);
+
+          const mostOrderedResponse = await axios.get(`http://localhost:3004/api/loyalty/most_ordered?email=${storedEmail}`);
+          console.log('Most Ordered Response:', mostOrderedResponse.data);
+          const { mostOrderedProductId } = mostOrderedResponse.data; // Poprawiona destrukturyzacja
+          const productId = parseInt(mostOrderedProductId); // Konwersja na liczbę
+          const product = menuResponse.data.flatMap(category => category.products || []).find(p => p.id === productId);
+          console.log('Found product for mostOrdered:', product);
+          setMostOrderedProduct(product || null);
         }
+      } catch (err) {
+        console.error('Błąd pobierania danych:', err.response?.data || err.message);
+        setError('Nie udało się pobrać danych');
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchMenu();
-    fetchLoyaltyPoints();
+    fetchData();
   }, []);
+
+  useEffect(() => {
+    // Aktualizuj mostOrderedProduct po załadowaniu menu
+    if (menu.length > 0 && userEmail) {
+      axios.get(`http://localhost:3004/api/loyalty/most_ordered?email=${userEmail}`)
+        .then(response => {
+          console.log('Most Ordered Update Response:', response.data);
+          const { mostOrderedProductId } = response.data; // Poprawiona destrukturyzacja
+          const productId = parseInt(mostOrderedProductId); // Konwersja na liczbę
+          const product = menu.flatMap(category => category.products || []).find(p => p.id === productId);
+          console.log('Updated mostOrderedProduct:', product);
+          setMostOrderedProduct(product || null);
+        })
+        .catch(err => console.error('Błąd pobierania most ordered:', err));
+    }
+  }, [menu, userEmail]);
 
   const login = async () => {
     try {
@@ -91,22 +110,29 @@ export default function Home() {
       setToken(token);
       localStorage.setItem('token', token);
 
-      // Zapisz email w ciasteczkach
       const decoded = jwt.decode(token);
       const userEmail = decoded?.email || '';
-      document.cookie = `userEmail=${userEmail}; path=/; max-age=86400`; // Ciasteczko ważne przez 1 dzień
+      document.cookie = `userEmail=${userEmail}; path=/; max-age=86400`;
       setUserEmail(userEmail);
 
       setRoleId(decoded?.role_id || null);
       setEmail(decoded?.email || '');
 
-      // Pobierz punkty lojalnościowe po zalogowaniu
       try {
         const pointsResponse = await axios.get(`http://localhost:3004/api/loyalty/balance?email=${userEmail}`);
         setLoyaltyPoints(pointsResponse.data.points || 0);
+
+        const mostOrderedResponse = await axios.get(`http://localhost:3004/api/loyalty/most_ordered?email=${userEmail}`);
+        console.log('Most Ordered Login Response:', mostOrderedResponse.data);
+        const { mostOrderedProductId } = mostOrderedResponse.data; // Poprawiona destrukturyzacja
+        const productId = parseInt(mostOrderedProductId); // Konwersja na liczbę
+        const product = menu.flatMap(category => category.products || []).find(p => p.id === productId);
+        console.log('Login mostOrderedProduct:', product);
+        setMostOrderedProduct(product || null);
       } catch (err) {
         console.error('Błąd pobierania punktów po login:', err.response?.data || err.message);
         setLoyaltyPoints(0);
+        setMostOrderedProduct(null);
       }
 
       alert('Zalogowano!');
@@ -124,8 +150,8 @@ export default function Home() {
     setLoyaltyPoints(0);
     setEmail('');
     setUserEmail('');
+    setMostOrderedProduct(null);
     localStorage.removeItem('token');
-    // Usuń ciasteczko
     document.cookie = 'userEmail=; path=/; max-age=0';
     alert('Wylogowano');
   };
@@ -189,11 +215,20 @@ export default function Home() {
     setTableNumber('');
     setDeliveryAddress({ street: '', city: '', postalCode: '' });
 
-    // Odśwież punkty lojalnościowe po płatności
     if (userEmail) {
       axios.get(`http://localhost:3004/api/loyalty/balance?email=${userEmail}`)
         .then(response => setLoyaltyPoints(response.data.points || 0))
         .catch(err => console.error('Błąd odświeżania punktów:', err));
+      axios.get(`http://localhost:3004/api/loyalty/most_ordered?email=${userEmail}`)
+        .then(response => {
+          console.log('Most Ordered Payment Response:', response.data);
+          const { mostOrderedProductId } = response.data; // Poprawiona destrukturyzacja
+          const productId = parseInt(mostOrderedProductId); // Konwersja na liczbę
+          const product = menu.flatMap(category => category.products || []).find(p => p.id === productId);
+          console.log('Payment mostOrderedProduct:', product);
+          setMostOrderedProduct(product || null);
+        })
+        .catch(err => console.error('Błąd odświeżania najczęściej zamawianego:', err));
     }
   };
 
@@ -371,12 +406,24 @@ export default function Home() {
                 </div>
                 <button
                   onClick={addProduct}
-                  className="mt-4 py-2 bg-red-6s00 text-white rounded-md hover:bg-red-500 transition font-semibold"
+                  className="mt-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-500 transition font-semibold"
                 >
                   Dodaj produkt
                 </button>
               </>
             )}
+          </div>
+        )}
+        {token && mostOrderedProduct && (
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-red-600">
+            <h2 className="text-2xl font-semibold text-red-600 mb-4">Polecane Dla Ciebie</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <ProductCustomization
+                key={mostOrderedProduct.id}
+                product={mostOrderedProduct}
+                onAddToCart={addToCart}
+              />
+            </div>
           </div>
         )}
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border-2 border-red-600">
