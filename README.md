@@ -1,8 +1,8 @@
-# 🍔 Menu Service API (Express + Prisma + PostgreSQL)
+# 🍔 Menu Service API (Express + Prisma + PostgreSQL + MongoDB)
 
 Menu Service is a backend REST API responsible for managing a restaurant menu  
 (products, categories, ingredients, allergens, and ordering system).  
-The project is built with Express.js, Prisma ORM, and a PostgreSQL database.
+The project is built with next.js, Express.js,MongoDB,Prisma ORM, and a PostgreSQL database.
 
 ## 📌 Key Features
 
@@ -30,10 +30,6 @@ The project is built with Express.js, Prisma ORM, and a PostgreSQL database.
 | Authentication | JWT |
 | Validation | express-validator |
 | Security | helmet, CORS |
-
----
-
-## 🚀 Installation & Setup
 
 ### 1️⃣ Clone the repository
 ```bash
