@@ -1,41 +1,41 @@
 # 🍔 Menu Service API (Express + Prisma + PostgreSQL)
 
-Menu Service to backendowa aplikacja REST API służąca do obsługi menu restauracyjnego
-(zarządzanie produktami, kategoriami, składnikami, alergenami oraz zamówieniami).
-Projekt wykorzystuje Express.js, Prisma ORM oraz bazę PostgreSQL.
+Menu Service is a backend REST API responsible for managing a restaurant menu  
+(products, categories, ingredients, allergens, and ordering system).  
+The project is built with Express.js, Prisma ORM, and a PostgreSQL database.
 
-## 📌 Kluczowe funkcjonalności
+## 📌 Key Features
 
-✅ System użytkowników (rejestracja, logowanie, weryfikacja tokenu)\
-✅ Role: `admin` i `customer`\
-✅ Admin może dodawać produkty do menu\
-✅ Kategorie produktów (np. burgery, napoje, desery)\
-✅ Produkty ze szczegółami (składniki, cena, dostępność, wartości odżywcze)\
-✅ Relacje wiele-do-wielu:
-- produkty ↔ składniki
-- składniki ↔ alergeny
+✅ User system (registration, login, token verification)  
+✅ Roles: `admin` and `customer`  
+✅ Admin can add products to the menu  
+✅ Product categories (e.g., burgers, drinks, desserts)  
+✅ Detailed product info (ingredients, price, availability, nutrition data)  
+✅ Many-to-many relations:
+- products ↔ ingredients  
+- ingredients ↔ allergens  
 
-✅ Walidacja danych (`express-validator`)\
-✅ Bezpieczeństwo (`helmet`, CORS, JWT)
+✅ Data validation (`express-validator`)  
+✅ Security (`helmet`, CORS, JWT)
 
 ---
 
-## 🛠 Technologie
+## 🛠 Tech Stack
 
-| Warstwa | Technologia |
-|---------|-------------|
+| Layer | Technology |
+|-------|------------|
 | Backend | Node.js / Express.js |
-| Baza danych | PostgreSQL |
+| Database | PostgreSQL |
 | ORM | Prisma |
-| Autoryzacja | JWT |
-| Walidacja | express-validator |
-| Bezpieczeństwo | helmet, CORS |
+| Authentication | JWT |
+| Validation | express-validator |
+| Security | helmet, CORS |
 
 ---
 
-## 🚀 Instalacja i uruchomienie
+## 🚀 Installation & Setup
 
-### 1️⃣ Klonowanie projektu
+### 1️⃣ Clone the repository
 ```bash
 git clone <repo>
 cd menu-service
